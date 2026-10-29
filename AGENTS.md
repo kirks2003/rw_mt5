@@ -617,3 +617,32 @@ any MT5 container or routing change.
 | XM | `xm5setup.exe` (5.0 MB) | `MetaTrader 5 - XM` | Requires KasmVNC GUI |
 
 All installers work correctly under Wine 11.20 Staging.
+
+---
+
+# MT5 Container Image Versioning Policy
+
+## Tag Convention
+
+Use **semantic versioning** (`MAJOR.MINOR.PATCH`) for Docker image tags:
+
+| Change | Bump | Example |
+|---|---|---|
+| Dockerfile change, new base image, Wine upgrade | `MAJOR` | `1.0.0` → `2.0.0` |
+| New DLL version, new MQL5 expert features | `MINOR` | `1.0.0` → `1.1.0` |
+| Config fix, dependency update, no functional change | `PATCH` | `1.0.0` → `1.0.1` |
+
+## Rules
+
+1. **No `:latest` tag.** Every image must have an explicit version tag. Remove `:latest` after retagging:
+   ```sh
+   docker tag <image>:<old-ver> <image>:<new-ver>
+   docker rmi <image>:latest   # if it existed
+   ```
+2. **Update compose files.** After retagging, update `image:` in the container's `docker-compose.yml`.
+3. **Clone preserves version.** `mt5-clone-container.sh` carries over the source image's tag. If the source has `:latest` or no tag, it defaults to `1.0.0`.
+4. **Build archives** (`archive/{env}/{build}/`) in the deploy pipeline use the build number (not the Docker tag) for versioning — those are independent.
+
+## Version Tracking in MariaDB
+
+The deployed DLL version is tracked in `expert_keepalive.dll_version` and `mt5_experts.dll_version`. The deploy pipeline cross-checks this against the built DLL version after every deploy.
