@@ -464,6 +464,105 @@ The MT5 container can reach all mesh hosts for deployment:
 
 ---
 
+# SSH Access & Credentials
+
+## Shared Key
+
+All hosts use the same shared **`kandev`** ed25519 key
+(`SHA256:/1xfmrDI0Y4EjdD…`). The private key is installed on both hub
+sandboxes (`~/.ssh/kandev`) and inside the MT5 container
+(`/home/kasm-user/.ssh/kandev`). **Root key login is disabled** on both
+hubs (root `authorized_keys` empty); always use the `ubuntu` user and
+`sudo` on hub hosts.
+
+## Access Matrix
+
+| Host | IP (reachable from sandboxes) | Login user | SSH key | Reachable from |
+|---|---|---|---|---|
+| **nbg-1** | `152.53.118.212` (public), `10.1.1.1` (mesh) | `ubuntu` / `kandev@…:2222` | `kandev` key | Both sandboxes, public IP |
+| **vie-1** | `152.53.35.177` (public), `10.2.1.1` (mesh) | `ubuntu` / `kandev@…:2222` | `kandev` key | Both sandboxes, public IP |
+| **Kandev sandbox (NBG)** | `172.26.0.2` (bridge), `127.0.0.1:2222` (host) | `kandev` / `root` | `kandev` key | nbg-1 loopback, both sandboxes via `:2222` |
+| **Kandev sandbox (VIE-1)** | `172.26.0.2` (bridge), `127.0.0.1:2222` (host) | `kandev` / `root` | `kandev` key | vie-1 loopback, both sandboxes via `:2222` |
+| **owrt002** | `10.1.1.2` (NBG) / `10.2.1.2` (VIE-1) | `root` | `kandev` key | Both sandboxes (direct, mesh) |
+| **owrt001, 003, 011, 018, 031, 032, 033** | `10.1.1.x` (NBG) / `10.2.1.x` (VIE-1) | `root` | `kandev` key | Owning hub's sandbox (direct) |
+| **pve103** | `192.168.15.7` | `root` | `kandev` key | Both sandboxes (via owrt002) |
+| **pve104** | `192.168.15.6` | `root` | `kandev` key | Both sandboxes (via owrt002) |
+| **vm103** (docker-103) | `192.168.53.111` | `ubuntu` | `kandev` key | Both sandboxes (via owrt002) |
+| **vm104** (docker-104) | `192.168.54.111` | `ubuntu` | `kandev` key | Both sandboxes (via owrt002) |
+| **MT5 container** (vm104) | `192.168.54.111:10190` (KasmVNC web) | `kasm-user` (VNC), `root` (container ssh) | `kandev` key | Both sandboxes (via vm104), KasmVNC web UI |
+| **owrt-fsn-1, hel-1, gra-1, lim-1, eri-1, waw-1** | `10.1.1.x` (NBG) / `10.2.1.x` (VIE-1) | `root` | `kandev` key | Both sandboxes (direct, mesh) |
+| **fsn-1, hel-1** (Proxmox) | `144.76.14.155` / `65.109.122.228` (public) | `root` | `kandev` key | Both sandboxes (public IP) |
+| **gra-1, lim-1, eri-1, waw-1** (Proxmox) | Various public IPs | `root` | `kandev` key | Both sandboxes (public IP) |
+| **gpu-1** | `194.182.188.115` | `ubuntu` / `root` | `kandev` key | Both sandboxes (public IP) |
+| **gpu-2** | `92.39.59.7` | `ubuntu` / `root` | `kandev` key | Both sandboxes (public IP) |
+| **ber-1, ber-2** (IONOS) | `217.154.145.10` / `85.215.213.123` | `root` | `kandev` key | Both sandboxes (public IP) |
+
+## SSH Aliases (sandbox `~/.ssh/config`)
+
+Both sandboxes carry short aliases for every host. The same alias name
+resolves to the correct IP per sandbox:
+
+| Alias | Resolves to (NBG sandbox) | Resolves to (VIE-1 sandbox) |
+|---|---|---|
+| `nbg-1` | `10.1.1.1` (mesh) | `10.1.1.1` (mesh via interhub) |
+| `vie-1` | `10.2.1.1` (mesh via interhub) | `10.2.1.1` (mesh) |
+| `owrt002` | `10.1.1.2` | `10.2.1.2` |
+| `pve103` | `192.168.15.7` | `192.168.15.7` |
+| `pve104` | `192.168.15.6` | `192.168.15.6` |
+| `vm103` | `192.168.53.111` | `192.168.53.111` |
+| `vm104` | `192.168.54.111` | `192.168.54.111` |
+| `gpu-1` | `194.182.188.115` | `194.182.188.115` |
+| `gpu-2` | `92.39.59.7` | `92.39.59.7` |
+
+## Access Paths
+
+**From a hub sandbox (NBG or VIE-1):** all mesh hosts are reachable
+directly — no ProxyJump needed. The sandbox egress is MASQUERADED by
+Docker to the host's `wg0` IP (`10.1.1.1` NBG / `10.2.1.1` VIE-1).
+
+**From the MT5 container on vm104:** SSH access to all mesh hosts works
+with the same `kandev` key. Public IPs time out from vm104 (behind
+owrt002's NAT); reach hosts via their mesh tunnel IPs instead.
+
+```sh
+# From any sandbox, reach any mesh host by alias:
+ssh owrt002                     # -> root@10.x.1.2 (per sandbox)
+ssh ubuntu@vm104                # -> docker-1-pve-104
+ssh root@pve103                 # -> Proxmox host behind owrt002
+
+# Reach the MT5 container's host:
+ssh ubuntu@vm104
+# Then on vm104:
+docker exec -it mt5-actr-s01-p104-1 bash
+
+# Direct container SSH (from sandbox, two-hop):
+ssh -J vm104 -p 2222 kandev@127.0.0.1   # -> kandev104 sandbox
+
+# From the MT5 container itself (deploy pipeline):
+./deploy.sh                     # auto-forwards over mesh
+```
+
+**To reach the KasmVNC desktop:**
+Open `https://mt5-actr-s01-p104-1.<hub FQDN>` in a browser (Basic
+`mesh-admin` first, then Authelia two-factor), or connect directly inside
+the mesh at `http://192.168.54.111:10190/`.
+
+## Access Limitations
+
+- **`a1ars021`** is explicitly excluded — never connected, owner-excluded.
+- **Public `2222/tcp`** on both hubs is whitelist-scoped (298 sources),
+  filtered in DOCKER-USER (`KANDEV-SSH-WL`), not by ufw.
+- **Direct VIE-1 route to `10.1.1.0/24`** cannot be assumed without the
+  reciprocal `wg_interhub` client.
+- **Root key login** is disabled on nbg-1 and vie-1 (empty
+  `authorized_keys`). Always use the `ubuntu` user + `sudo` on hub hosts.
+- **OpenWrt routers** use dropbear; the `kandev` key is authorized for
+  `root`. Password authentication is disabled on all.
+- **Public Proxmox hosts** (fsn-1, hel-1, gra-1, lim-1, eri-1, waw-1):
+  SSH on port 22, whitelisted to 298 sources; password auth disabled.
+
+---
+
 # Container & Service Management
 
 ## Docker Service Policy
